@@ -40,12 +40,21 @@ class PreprocessCompletedMessage(BaseModel):
     completed_at: datetime
 
 
+class ErrorBody(BaseModel):
+    code: str
+    message: str
+
+
 class PreprocessFailedMessage(BaseModel):
-    """analysis.failed 라우팅 키로 발행되는 메시지 본문"""
+    """analysis.failed 라우팅 키로 발행되는 메시지 본문.
+
+    실제 발행은 services/rabbitmq_publisher.py 의 publish_preprocess_failed 가
+    dict를 직접 만들어 수행한다. 본 스키마는 BE와 공유하는 명세 역할이며,
+    README §4.2 의 페이로드와 동일한 중첩 구조(`error: {code, message}`)를 정의한다.
+    """
     job_id: str
     user_id: str
     status: Literal["failed"] = "failed"
     event_type: Literal["preprocess_failed"] = "preprocess_failed"
-    error_code: str
-    error_message: str
+    error: ErrorBody
     failed_at: datetime
