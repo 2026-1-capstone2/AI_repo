@@ -51,79 +51,60 @@
 
 ---
 
-## 2. 실행 방법
+## 2. 설치 및 실행 (실 사용 기준)
+
+GPU 서버에서 실모델 모드로 동작시키는 표준 절차. 개발 환경(GPU 없는 노트북)에서 흐름만 검증하려면 §3 stub 모드를 참고한다.
 
 ### 2.1. 요구사항
 
-| 항목 | stub 모드 (개발/테스트) | 실모델 모드 (운영) |
-|------|------------------------|-------------------|
-| **Python** | 3.13 (현재 검증 기준) | **3.10** (PyTorch 2.1.1 호환) |
-| **CUDA** | 불필요 | **12.1** |
-| **GPU** | 불필요 | NVIDIA, Compute Capability 8.0+ (Ampere 이상) |
-| **PyTorch** | 미사용 | 2.1.1 + cu121 |
-| **컴파일러** | 불필요 | gcc/g++ 11 (CUT3R C++ 확장 빌드) |
-| **OS** | macOS / Linux | Ubuntu 22.04 권장 |
-| **메모리(VRAM)** | 불필요 | 8GB+ (RTX 3060 Ti 기준 동작 확인) |
+| 항목 | 버전·사양 |
+|------|----------|
+| **Python** | 3.10 (PyTorch 2.1.1 wheel 호환) |
+| **CUDA** | 12.1 |
+| **GPU** | NVIDIA, Compute Capability 8.0+ (Ampere 이상), VRAM 8 GB+ |
+| **PyTorch** | 2.1.1 + cu121 |
+| **컴파일러** | gcc/g++ 11 (CUT3R curope C++ 확장 빌드용) |
+| **OS** | Ubuntu 22.04 권장 |
+| **기타** | git-lfs (LoRA 가중치 LFS), gdown (Google Drive 가중치) |
 
-> **참고**: PyTorch 2.1.1은 Python 3.13용 wheel을 제공하지 않는다. 실모델 통합 시(TODO C 그룹) 별도 가상환경을 Python 3.10 기반으로 새로 만들거나 PyTorch를 3.13 호환 버전(2.5+)으로 갱신해야 한다. 본 레포 표준 환경 셋업 절차는 [setup.md](../setup.md) 참고.
+자세한 환경 셋업 트러블슈팅은 [setup.md](../setup.md) 참고.
 
-### 2.2. 로컬 개발 (stub 모드)
-
-GPU 없이도 **전체 흐름 시뮬레이션 가능** — `settings.stub_models=True` (기본값).
+### 2.2. 클론
 
 ```bash
-# 1) 가상환경 (Python 3.13)
-python -m venv .venv
+git clone https://github.com/2026-1-capstone2/AI_repo.git
+cd AI_repo
+```
+
+### 2.3. 가상환경 + 의존성 설치
+
+```bash
+# 1) Python 3.10 가상환경
+python3.10 -m venv .venv
 source .venv/bin/activate
 
-# 2) 의존성 설치
+# 2) 기본 의존성
+pip install --upgrade pip
 pip install -r requirements.txt
 
-# 3) (선택) RabbitMQ 띄우기
-docker run -d --name rmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+# 3) PyTorch (cu121 wheel — 별도 인덱스 필요)
+pip install torch==2.1.1 torchvision==0.16.1 \
+  --index-url https://download.pytorch.org/whl/cu121
 
-# 4) 서버 실행
-uvicorn app.main:app --reload --port 8000
+# 4) 실모델 의존성
+pip install -r requirements-ml.txt
 
-# 5) Swagger UI
-open http://localhost:8000/docs
+# 5) flash-attn (cu12 + torch2.1 + cpython 3.10 전용 wheel)
+pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.1.post1/flash_attn-2.7.1.post1+cu12torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+
+# 6) 모델 가중치 다운로드용 도구
+sudo apt install git-lfs -y
+pip install gdown
 ```
 
-### 2.3. 통신 테스트 (stub)
+### 2.4. 모델 가중치 다운로드
 
-```bash
-# 전처리 요청
-curl -X POST http://localhost:8000/api/v1/preprocess \
-  -H "Content-Type: application/json" \
-  -d '{
-    "job_id": "test-job-1",
-    "user_id": "u_demo",
-    "video_url": "https://example.com/test.mp4"
-  }'
-
-# 작업 상태
-curl http://localhost:8000/api/v1/jobs/test-job-1
-
-# 채팅 (stub 응답)
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "job_id": "test-job-1",
-    "user_id": "u_demo",
-    "question": "방의 크기는?"
-  }'
-```
-
-### 2.4. ngrok 외부 노출 (팀원 데모용)
-
-```bash
-python start_ngrok.py
-# → 공개 URL이 출력됨
-```
-
-### 2.5. 모델 가중치 다운로드
-
-실모델 모드 실행 전 다음 세 가지 가중치가 필요하다.
+세 가지 가중치(약 15~16 GB)를 받아야 한다. 저장 경로는 `settings.cut3r_weights`, `settings.model_path` 의 기본값과 일치시키거나 환경변수로 재정의한다.
 
 | 가중치 | 출처 | 크기 | 저장 경로 (기본값) |
 |--------|------|------|-------------------|
@@ -131,38 +112,29 @@ python start_ngrok.py
 | **VLM-3R LoRA** | HuggingFace `Journey9ni/vlm-3r-llava-qwen2-lora` | ~700 MB | `/data/vlm-3r-llava-qwen2-lora/` |
 | **베이스 모델** (LLaVA-NeXT-Video-7B-Qwen2) | HuggingFace `lmms-lab/LLaVA-NeXT-Video-7B-Qwen2` | ~14 GB | HuggingFace 캐시 (자동) |
 
-총 약 15~16 GB. 저장 경로는 `settings.cut3r_weights`, `settings.model_path` 와 일치시키거나 환경변수로 재정의한다.
-
-#### 사전 설치
-
-```bash
-sudo apt install git-lfs -y    # LoRA의 LFS 파일 다운로드용
-pip install gdown               # CUT3R의 Google Drive 다운로드용
-```
-
-#### 1) CUT3R 가중치
+#### CUT3R
 
 ```bash
 sudo mkdir -p /data/CUT3R/src && sudo chown $USER /data/CUT3R/src
 cd /data/CUT3R/src
-gdown 1Asz-ZB3FfpzZYwunhQvNPZEUA8XUNAYD       # cut3r_512_dpt_4_64.pth (~600MB)
+gdown 1Asz-ZB3FfpzZYwunhQvNPZEUA8XUNAYD       # cut3r_512_dpt_4_64.pth
 ```
 
-> gdown 6.x 부터 `--fuzzy` 옵션이 제거되었으므로 파일 ID 만 직접 전달해야 한다.
+> gdown 6.x 부터 `--fuzzy` 옵션이 제거되었으므로 파일 ID 만 직접 전달.
 
-#### 2) VLM-3R LoRA 가중치
+#### VLM-3R LoRA
 
 ```bash
-git lfs install                # 1회만, 미설치 시 134바이트 LFS 포인터만 받음
+git lfs install                # 1회만. 미설치 시 134바이트 LFS 포인터만 받음
 cd /data
 git clone https://huggingface.co/Journey9ni/vlm-3r-llava-qwen2-lora
 cd vlm-3r-llava-qwen2-lora
 git lfs pull                   # adapter_model.bin (617MB), non_lora_trainables.bin (51MB)
 ```
 
-#### 3) 베이스 모델 (자동 다운로드)
+#### 베이스 모델 (자동 다운로드)
 
-서버 첫 기동 시 `from_pretrained()` 호출로 HuggingFace에서 자동 다운로드된다(~14GB). 캐시 위치 지정 권장:
+서버 첫 기동 시 HuggingFace 에서 자동 다운로드된다. 캐시 위치 지정 권장:
 
 ```bash
 export HF_HOME=/data/huggingface_cache
@@ -177,45 +149,142 @@ huggingface-cli download lmms-lab/LLaVA-NeXT-Video-7B-Qwen2 \
 #### 검증
 
 ```bash
-ls -lh /data/CUT3R/src/cut3r_512_dpt_4_64.pth                # 약 600MB
-ls -lh /data/vlm-3r-llava-qwen2-lora/adapter_model.bin       # 617MB
-ls -lh /data/vlm-3r-llava-qwen2-lora/non_lora_trainables.bin # 51MB
+ls -lh /data/CUT3R/src/cut3r_512_dpt_4_64.pth                # ~600 MB
+ls -lh /data/vlm-3r-llava-qwen2-lora/adapter_model.bin       # 617 MB
+ls -lh /data/vlm-3r-llava-qwen2-lora/non_lora_trainables.bin # 51 MB
 ```
 
-세 파일 크기가 위와 같으면 정상. 자세한 트러블슈팅은 [setup.md](../setup.md) §A.6 ~ §A.7 참조.
+세 파일 크기가 위와 같으면 정상. 자세한 트러블슈팅은 [setup.md](../setup.md) §A.6 ~ §A.7 참고.
 
-### 2.6. 실모델 모드 실행 (GPU 필요)
+### 2.5. 환경 변수 설정
 
-모델 통합 작업은 [TODO.md](TODO.md) §C 참고. GPU 서버(Python 3.10 + CUDA 12.1)에서:
+프로젝트 루트에 `.env` 파일을 만들거나 셸에서 export 한다.
 
 ```bash
-# 1) 가상환경 (Python 3.10)
-python3.10 -m venv .venv
-source .venv/bin/activate
-
-# 2) 기본 + 실모델 의존성 설치
-pip install -r requirements.txt
-pip install -r requirements-ml.txt
-# PyTorch는 cu121 인덱스로 직접 설치 권장:
-pip install torch==2.1.1 torchvision==0.16.1 \
-  --index-url https://download.pytorch.org/whl/cu121
-# flash-attn 은 wheel URL 직접 설치 권장 (자세한 셋업은 ../setup.md 참고)
-
-# 3) 환경변수 (모델 경로·캐시·stub 해제)
 export STUB_MODELS=false
 export MODEL_PATH=/data/vlm-3r-llava-qwen2-lora
 export CUT3R_WEIGHTS=/data/CUT3R/src/cut3r_512_dpt_4_64.pth
 export HF_HOME=/data/huggingface_cache
 
-# 4) 서버 기동
+# Spring BE 연동
+export INTERNAL_API_TOKEN=<공유 비밀값>
+export RABBITMQ_HOST=<MQ 호스트>
+export RABBITMQ_USER=<...>
+export RABBITMQ_PASSWORD=<...>
+```
+
+> 전체 환경변수 목록은 §7 환경 설정 참고.
+
+### 2.6. 서버 실행
+
+```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-> **`--workers 1` 필수**: 모델이 GPU에 1번만 로드되어야 함. N개 워커 = VRAM N배.
+> **`--workers 1` 필수**: 모델이 GPU 에 1번만 로드되어야 한다. N개 워커 = VRAM N배.
+
+부팅 로그 확인:
+```
+[loader] VLM loaded. VRAM=...GB
+[loader] CUT3R loaded on cuda. VRAM=...GB
+INFO:     Application startup complete.
+```
+
+### 2.7. 동작 검증
+
+```bash
+# 1) 헬스 체크
+curl http://localhost:8000/health
+#   → ai_model_loaded=true, cut3r_loaded=true
+
+# 2) 전처리 요청 (BE 발급 Pre-signed GET URL)
+curl -X POST http://localhost:8000/api/v1/preprocess \
+  -H "X-Internal-Token: <설정한 토큰>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "test-1",
+    "user_id": "u_demo",
+    "video_url": "<S3 Pre-signed GET URL>"
+  }'
+
+# 3) 작업 상태 폴링
+curl http://localhost:8000/api/v1/jobs/test-1
+
+# 4) 채팅 (실모델 응답, metadata.stub == false)
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "X-Internal-Token: <설정한 토큰>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "test-1",
+    "user_id": "u_demo",
+    "question": "방의 크기는 얼마인가요?"
+  }'
+```
+
+전체 GPU 서버 단계별 검증 체크리스트(V1~V5) 는 [TODO.md §C-VERIFY](TODO.md) 참고.
 
 ---
 
-## 3. 프로젝트 구조
+## 3. stub 모드 (부가 — GPU 없는 개발 환경용)
+
+`settings.stub_models=True` 인 상태로 서버를 띄우면 실모델·GPU 없이도 HTTP·RabbitMQ 흐름을 검증할 수 있다. 모델 호출 부분만 더미 응답으로 대체되고 라우팅·인증·메시지 발행은 실모드와 동일하게 동작한다.
+
+### 3.1. 가상환경 (Python 3.10+ 또는 3.13)
+
+PyTorch 와 모델 의존성(`requirements-ml.txt`) 은 설치하지 않는다.
+
+```bash
+git clone https://github.com/2026-1-capstone2/AI_repo.git
+cd AI_repo
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt   # 기본만
+
+# (선택) RabbitMQ 로컬 띄우기
+docker run -d --name rmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+
+# 서버 실행 — STUB_MODELS=true 가 기본값
+uvicorn app.main:app --reload --port 8000
+```
+
+Swagger UI: http://localhost:8000/docs
+
+### 3.2. 통신 테스트
+
+```bash
+curl -X POST http://localhost:8000/api/v1/preprocess \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "test-job-1",
+    "user_id": "u_demo",
+    "video_url": "https://example.com/test.mp4"
+  }'
+
+curl http://localhost:8000/api/v1/jobs/test-job-1
+
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "test-job-1",
+    "user_id": "u_demo",
+    "question": "방의 크기는?"
+  }'
+```
+
+`/chat` 응답에 `metadata.stub == true` 가 표시된다.
+
+### 3.3. ngrok 외부 노출
+
+팀원 데모용으로 로컬 stub 서버를 공개 URL 로 노출:
+
+```bash
+python start_ngrok.py
+```
+
+---
+
+## 4. 프로젝트 구조
 
 ```
 ai_repo/
@@ -258,7 +327,7 @@ ai_repo/
 └── README.md
 ```
 
-### 3.1. 폴더 책임 분리
+### 4.1. 폴더 책임 분리
 
 | 폴더 | 의존 가능 | 의존 금지 | 핵심 |
 |------|-----------|-----------|------|
@@ -276,33 +345,33 @@ BE ↔ AI 통신은 **두 채널**로 나뉜다. 아래 표가 전체 그림이�
 
 | 구분 | 채널 | 방향 | 동기성 | 해당 섹션 |
 |------|------|------|--------|-----------|
-| 전처리 요청 | HTTP `POST /api/v1/preprocess` | BE → AI | 비동기 (202 즉시 반환) | **§4 (HTTP)** |
-| 전처리 완료/실패 통보 | RabbitMQ `analysis.completed` / `analysis.failed` | AI → BE | 비동기 | **§5 (RabbitMQ)** |
-| 질문/응답 | HTTP `POST /api/v1/chat` | BE → AI | 동기 (응답 즉시 반환) | **§4 (HTTP)** |
-| 작업 상태 폴링 | HTTP `GET /api/v1/jobs/{job_id}` | BE → AI | 동기 | **§4 (HTTP)** |
-| 헬스 체크 | HTTP `GET /health` | (외부) → AI | 동기 | **§4 (HTTP)** |
+| 전처리 요청 | HTTP `POST /api/v1/preprocess` | BE → AI | 비동기 (202 즉시 반환) | **§5 (HTTP)** |
+| 전처리 완료/실패 통보 | RabbitMQ `analysis.completed` / `analysis.failed` | AI → BE | 비동기 | **§6 (RabbitMQ)** |
+| 질문/응답 | HTTP `POST /api/v1/chat` | BE → AI | 동기 (응답 즉시 반환) | **§5 (HTTP)** |
+| 작업 상태 폴링 | HTTP `GET /api/v1/jobs/{job_id}` | BE → AI | 동기 | **§5 (HTTP)** |
+| 헬스 체크 | HTTP `GET /health` | (외부) → AI | 동기 | **§5 (HTTP)** |
 
 요약:
-- **§4 = HTTP** — BE가 AI를 호출하는 모든 요청/응답 (요청 방향: BE → AI)
-- **§5 = RabbitMQ** — AI가 전처리 결과를 BE에 되돌려주는 비동기 메시지 (방향: AI → BE)
+- **§5 = HTTP** — BE가 AI를 호출하는 모든 요청/응답 (요청 방향: BE → AI)
+- **§6 = RabbitMQ** — AI가 전처리 결과를 BE에 되돌려주는 비동기 메시지 (방향: AI → BE)
 
 전처리 한 건의 전체 흐름:
 ```
-BE ──HTTP POST /preprocess──▶ AI        (§4)
-BE ◀──── 202 Accepted ────── AI         (§4)
+BE ──HTTP POST /preprocess──▶ AI        (§5)
+BE ◀──── 202 Accepted ────── AI         (§5)
                               AI: 백그라운드 처리
-BE ◀═══ RabbitMQ analysis.completed ═══ AI   (§5)
+BE ◀═══ RabbitMQ analysis.completed ═══ AI   (§6)
 ```
 
 ---
 
-## 4. HTTP API (동기 요청 · BE → AI)
+## 5. HTTP API (동기 요청 · BE → AI)
 
-> 본 절(§4) 전체가 **HTTP** 통신이다. RabbitMQ 메시지 규약은 §5를 참조.
+> 본 절(§5) 전체가 **HTTP** 통신이다. RabbitMQ 메시지 규약은 §6을 참조.
 > 모든 에러 응답은 FastAPI 규약에 따라 최상위 `detail` 키로 래핑된다.
 > (예: `{"detail": { ... }}`)
 
-### 4.1. `POST /api/v1/preprocess` — 영상 전처리
+### 5.1. `POST /api/v1/preprocess` — 영상 전처리
 
 **Request 필드**
 
@@ -359,11 +428,11 @@ BE ◀═══ RabbitMQ analysis.completed ═══ AI   (§5)
 }
 ```
 
-전처리 진행은 `BackgroundTasks`로 수행된다. **여기까지가 HTTP 응답이며, 처리 완료/실패는 HTTP가 아니라 RabbitMQ로 별도 통보된다 → §5 참조.**
+전처리 진행은 `BackgroundTasks`로 수행된다. **여기까지가 HTTP 응답이며, 처리 완료/실패는 HTTP가 아니라 RabbitMQ로 별도 통보된다 → §6 참조.**
 
 > **stub 모드 동작**: 요청·응답(202)·RabbitMQ 발행은 실모드와 동일하게 수행된다. 차이는 CUT3R 추출이 더미 텐서로 대체되고 S3 업로드가 스킵된다는 점뿐이다. 따라서 `analysis.completed` 메시지의 `spatial_features_s3_key`가 가리키는 경로에는 실제 파일이 존재하지 않는다.
 
-### 4.2. `POST /api/v1/chat` — 자연어 질문 응답
+### 5.2. `POST /api/v1/chat` — 자연어 질문 응답
 
 **Request 필드**
 
@@ -445,7 +514,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 { "detail": { "code": "PREPROCESS_NOT_READY", "message": "전처리 미완료 (현재 status=processing)" } }
 ```
 
-### 4.3. `GET /api/v1/jobs/{job_id}` — 작업 상태 조회
+### 5.3. `GET /api/v1/jobs/{job_id}` — 작업 상태 조회
 
 폴링용. RabbitMQ 메시지 누락 시 BE의 복구 경로로 사용한다.
 
@@ -466,7 +535,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 | `data.video_path` | string | 처리 중 이후 | 로컬 다운로드 경로 |
 | `data.spatial_features_s3_key` | string | 완료 시 | 추출 결과 S3 키 |
 | `data.completed_at` | datetime | 완료 시 | 완료 시각 |
-| `data.error_code` | string | 실패 시 | 에러 코드 (§5.3) |
+| `data.error_code` | string | 실패 시 | 에러 코드 (§6.3) |
 | `data.error_message` | string | 실패 시 | 에러 메시지 |
 | `data.failed_at` | datetime | 실패 시 | 실패 시각 |
 
@@ -500,7 +569,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 }
 ```
 
-### 4.4. `GET /health` — 헬스 체크
+### 5.4. `GET /health` — 헬스 체크
 
 **Response — `200 OK`**
 
@@ -534,13 +603,13 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 5. RabbitMQ 메시지 계약 (비동기 통보 · AI → BE)
+## 6. RabbitMQ 메시지 계약 (비동기 통보 · AI → BE)
 
 > 여기서부터는 **HTTP가 아니다.** AI 서버가 전처리 작업을 마친 뒤 BE에게
 > 결과를 알리기 위해 RabbitMQ 메시지 큐로 발행하는 메시지의 규약이다.
-> HTTP 요청/응답 명세는 §4를 참조.
+> HTTP 요청/응답 명세는 §5를 참조.
 
-### 5.1. Exchange / Queue
+### 6.1. Exchange / Queue
 
 | 항목 | 값 |
 |------|-----|
@@ -548,7 +617,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 | Queue | `analysis_results` (durable) |
 | Binding | `analysis.*` |
 
-### 5.2. Routing Key & Payload
+### 6.2. Routing Key & Payload
 
 **`analysis.completed`** (전처리 성공)
 ```json
@@ -577,7 +646,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 **`event_type` 필드**: 향후 `chat_completed` 등으로 확장 가능. BE는 routing key + event_type 조합으로 디스패치.
 
-### 5.3. 에러 코드
+### 6.3. 에러 코드
 
 | code | 의미 |
 |------|------|
@@ -589,7 +658,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 6. 환경 설정
+## 7. 환경 설정
 
 `app/core/config.py` 의 `Settings` 클래스가 환경변수/`.env`에서 자동 로드. 주요 키:
 
@@ -614,9 +683,9 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 7. 작업 상태
+## 8. 작업 상태
 
-### 7.1. 완료
+### 8.1. 완료
 - [x] FastAPI 골격 + 라우터 분리 (`/preprocess`, `/chat`, `/jobs`, `/health`)
 - [x] Pydantic schemas (preprocess, chat, MQ payload)
 - [x] RabbitMQ publisher (lazy connect, `analysis.*` routing)
@@ -627,7 +696,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 - [x] stub 모드 (GPU·실모델 없이 전 흐름 시뮬레이션 가능)
 - [x] FastAPI lifespan (모델 로드/해제)
 
-### 7.2. 다음 작업
+### 8.2. 다음 작업
 
 [TODO.md](TODO.md) 에서 우선순위별로 관리:
 
@@ -639,6 +708,6 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 8. 관련 문서
+## 9. 관련 문서
 
 - [TODO.md](TODO.md) — 우선순위별 작업 리스트
