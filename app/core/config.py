@@ -55,7 +55,14 @@ class Settings(BaseSettings):
     rabbitmq_routing_key_completed: str = "analysis.completed"
     rabbitmq_routing_key_failed: str = "analysis.failed"
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+    # protected_namespaces=() : model_path/model_base 가 Pydantic v2 의 model_ 예약 네임스페이스와
+    # 충돌해 UserWarning이 발생하는 것을 막는다 (런타임 동작에는 영향 없음).
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",
+        protected_namespaces=(),
+    )
 
 
 settings = Settings()
