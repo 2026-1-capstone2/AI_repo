@@ -18,6 +18,33 @@
 
 ---
 
+## 진행 현황 (2026-05-28 기준)
+
+도커 관련 작업(C8 Dockerfile, D1 docker-compose, E 그룹 배포)은 **별도 트랙으로 분리**하고 현 시점에서는 보류한다. 본 트랙은 ai_repo 코드만으로 GPU 서버에서 실모델 동작까지 완료하는 것을 목표로 한다.
+
+### 코드 측 완료 (origin/main 반영)
+
+| 항목 | 커밋 | 비고 |
+|------|------|------|
+| C2·C3 — VLM-3R / CUT3R 코드 이식 (추론 전용) | `8f7cc90` | 205 파일 / 41,276줄. train·eval·serve·assets·examples 등 제외 |
+| C4 — import 경로 치환 (`llava.*` → `app.vlm.llava.*`) | `bb44529` | 25 파일 / 47줄 |
+| C11 — 실모델 의존성 분리 (`requirements-ml.txt`) | `f5b65cc` | torch / transformers / flash-attn 등 |
+| C5·C6·C7 — `load_vlm` / `load_cut3r` / `extract_spatial_features` 실구현 | `bc8e9ff` | 본 레포 `extract_spatial_features.py` 흐름 이식 |
+
+### 보류 (도커·인프라 트랙)
+
+| 항목 | 사유 |
+|------|------|
+| C8 Dockerfile | 도커 트랙 분리 |
+| D1 docker-compose | 도커 트랙 분리 |
+| E1~E4 배포 (GPU 인스턴스·IAM·도메인·k8s) | 인프라 트랙 |
+
+### 다음 단계 — C-VERIFY (GPU 서버 검증)
+
+코드 측 작업은 macOS 환경에서 검증 불가 (torch CUDA wheel 부재). GPU 서버에서 `git pull` 후 아래 체크리스트로 확인하고, 깨지는 항목이 있으면 그 정보로 코드 보완을 진행한다. 자세한 내용은 §C-VERIFY 참조.
+
+---
+
 ## A. stub 모드 안정화
 
 `settings.stub_models=True` 상태에서 BE 통합 검증과 단위 테스트를 가능하게 만드는 작업.
@@ -360,6 +387,106 @@ stub 응답으로도 전 흐름 검증이 가능한 단계.
   3. 2회차: `spatial_cache_hit=true`, 응답 시간 측정
 - **완료 기준**: 2회차가 1회차보다 유의미하게 빠름 (S3 다운로드 시간 절감)
 - **의존성**: C12
+
+---
+
+## C-VERIFY. GPU 서버 검증 (코드 측 C2~C7·C11 완료 후)
+
+`bc8e9ff` 까지의 코드 변경은 macOS 환경에서 실제 동작 검증이 불가능하다 (torch CUDA wheel 부재, GPU 부재). GPU 서버에서 `git pull` 후 본 절의 체크리스트를 순서대로 진행하여 깨지는 지점을 식별하고, 발견된 문제는 후속 패치로 처리한다.
+
+### 사전 준비
+
+- **수행 절차**
+  1. GPU 서버에서 ai_repo 최신 `main` 으로 `git pull`
+  2. Python 3.10 venv 생성 후 `pip install -r requirements.txt` + `pip install -r requirements-ml.txt`
+  3. PyTorch 는 cu121 index 로 별도 설치: `pip install torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cu121`
+  4. flash-attn wheel 직접 설치 (자세한 wheel URL 은 [README §2.6](README.md) 참조)
+  5. 모델 가중치 다운로드 (README §2.5 절차에 따라 CUT3R `.pth`, VLM-3R LoRA, 베이스 모델 캐시)
+  6. `.env` 에 `STUB_MODELS=false`, `MODEL_PATH=...`, `CUT3R_WEIGHTS=...`, `HF_HOME=...` 설정
+- **완료 기준**: `python -c "import torch; print(torch.cuda.is_available())"` 결과 `True`
+
+### V1. CUT3R 가중치 정상 로드
+
+- **목적**: `app/vlm/loader.py::load_cut3r()` 가 실제 가중치 파일을 정상 적재하는지 확인.
+- **검증 명령**
+  ```bash
+  python -c "from app.vlm.loader import load_cut3r; h = load_cut3r(); print(type(h['model']).__name__, h['device'], h['dtype'])"
+  ```
+- **예상 결과**: `Cut3rEncoder cuda torch.float16` 출력, GPU VRAM 사용량 약 1.5GB 증가
+- **실패 시 점검 항목**
+  - `Cut3rSpatialConfig` 가 `weights_path`/`export_point_cloud`/`point_cloud_output_dir`/`point_cloud_voxel_size` 4개 인자를 그대로 받는지 (시그니처 변경 가능성)
+  - 가중치 파일 경로 (`settings.cut3r_weights`) 의 존재 여부와 권한
+  - CUT3R curope C++ 확장 빌드 여부 (`app/vlm/CUT3R/src/croco/models/curope/` 에서 `python setup.py build_ext --inplace`)
+
+### V2. `process_video_with_decord` 가 로컬 `_VideoArgs` 와 호환
+
+- **목적**: `cut3r_runner.py::extract_spatial_features()` 가 정의한 `_VideoArgs` dataclass (3필드) 만으로 본 레포 `process_video_with_decord` 가 동작하는지 확인.
+- **검증 명령** (테스트 영상 1개 준비 후)
+  ```bash
+  python -c "
+  from app.vlm.llava.utils import process_video_with_decord
+  from app.vlm.cut3r_runner import _VideoArgs
+  frames, vt, ft, n = process_video_with_decord('/path/to/sample.mp4', _VideoArgs())
+  print(len(frames), frames[0].shape if hasattr(frames[0], 'shape') else type(frames[0]))
+  "
+  ```
+- **예상 결과**: 32 프레임 (또는 영상 길이에 따라 그 이하), 각 프레임이 PIL/numpy 이미지
+- **실패 시 점검 항목**: `process_video_with_decord` 가 `_VideoArgs` 에 없는 속성(`video_folder`, `force_resample` 등) 을 참조하면 `AttributeError`. 필요한 필드를 `_VideoArgs` 에 추가.
+
+### V3. Cut3rEncoder forward 시그니처
+
+- **목적**: `Cut3rEncoder(frames_tensor, point_cloud_output_paths=None)` 호출 형태가 실제 클래스 시그니처와 일치하는지 확인.
+- **검증 명령**
+  ```bash
+  python -c "
+  import torch
+  from app.vlm.loader import load_cut3r
+  h = load_cut3r()
+  x = torch.randn(32, 3, 432, 432, device=h['device'], dtype=h['dtype'])
+  cam, patch = h['model'](x, point_cloud_output_paths=None)
+  print('camera_tokens:', cam.shape, '/ patch_tokens:', patch.shape)
+  "
+  ```
+- **예상 결과**: `camera_tokens: torch.Size([32, 1, 768]) / patch_tokens: torch.Size([32, 729, 768])`
+- **실패 시 점검 항목**
+  - `point_cloud_output_paths` 인자명·기본값 차이 → `cut3r_runner.py::extract_spatial_features` 의 호출부 수정
+  - 입력 차원 (`(F, C, H, W)` 대신 `(B, F, C, H, W)` 강제) 여부
+
+### V4. 단일 영상 e2e (전처리)
+
+- **목적**: `/api/v1/preprocess` 요청부터 RabbitMQ 발행까지 실모델 흐름이 통과하는지 확인.
+- **수행 절차**
+  1. 서버 기동: `STUB_MODELS=false uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1`
+  2. `/health` 확인 (`ai_model_loaded=true`, `cut3r_loaded=true`)
+  3. 테스트 영상에 대해 `/preprocess` 호출 (Pre-signed URL 또는 공개 mp4 URL)
+  4. `/jobs/{job_id}` 폴링으로 `status=completed` 도달 확인
+  5. S3 (또는 stub 시 로컬 더미) 에 `spatial_features/{user_id}/{job_id}.pt` 생성 확인
+  6. 저장된 `.pt` 파일을 `torch.load` 로 다시 열어 `camera_tokens.shape == (32, 1, 768)`, `patch_tokens.shape == (32, 729, 768)` 확인
+- **완료 기준**: 위 6단계 전부 통과
+- **의존성**: V1, V2, V3
+
+### V5. 단일 영상 e2e (추론)
+
+- **목적**: `/api/v1/chat` 요청이 실모델로 응답을 반환하는지 확인.
+- **수행 절차**
+  1. V4 에서 전처리 완료된 `job_id` 로 `/chat` 호출 (`question` 임의)
+  2. 응답 `metadata.stub == false` 확인
+  3. `metadata.inference_time_ms` 가 0 보다 큼 (실제 추론 시간)
+  4. 동일 `job_id` 로 2회차 호출 → `metadata.spatial_cache_hit == true`, 응답 시간 단축 (C13 검증)
+- **완료 기준**: 실모델 자연어 응답 수신, 캐시 적중 시 응답 시간 감소
+- **의존성**: V4
+
+### 검증 결과 회신 양식
+
+각 V1~V5 진행 후 다음 형식으로 결과를 정리하면 후속 패치 작업이 빨라진다:
+
+```
+V1 결과: [ PASS / FAIL ] — (FAIL 시 에러 메시지 전문)
+V2 결과: ...
+V3 결과: ...
+V4 결과: ...
+V5 결과: ...
+```
 
 ---
 
