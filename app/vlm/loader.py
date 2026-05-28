@@ -49,17 +49,40 @@ def load_vlm() -> dict | None:
 
 
 def load_cut3r() -> dict | None:
-    """CUT3R 모델만 별도 핸들로 로드. 전처리 경로 전용."""
+    """CUT3R 모델만 별도 핸들로 로드. 전처리 경로 전용.
+
+    본 레포 scripts/extract_spatial_features.py 의 process_videos_on_gpu()
+    초기화 부분(line 196~212)을 그대로 옮긴 구현. Cut3rSpatialConfig 로
+    가중치 경로 등을 설정하고 Cut3rEncoder 로 모델을 구성한 뒤 GPU 에 적재한다.
+
+    Returns:
+        {"model": Cut3rEncoder, "device": "cuda", "dtype": torch.float16} 또는 stub
+    """
     if settings.stub_models:
         logger.warning("[loader] stub_models=True → CUT3R 미로드")
         return None
 
     import torch
-    # TODO: 실제 CUT3R weight 로딩 함수는 scripts/extract_spatial_features.py 참고
-    # from app.vlm.CUT3R.src.dust3r.inference import load_model as load_cut3r_weights
-    raise NotImplementedError(
-        "CUT3R loader 미구현. extract_spatial_features.py를 참조해 로딩 코드를 채울 것."
+    from app.vlm.llava.model.multimodal_spatial_encoder.cut3r_spatial_encoder import (
+        Cut3rSpatialConfig,
+        Cut3rEncoder,
+    )  # type: ignore
+
+    cut3r_config = Cut3rSpatialConfig(
+        weights_path=settings.cut3r_weights,
+        # 추론 경로에서는 point cloud 출력 불필요
+        export_point_cloud=False,
+        point_cloud_output_dir=None,
+        point_cloud_voxel_size=None,
     )
+    spatial_tower = Cut3rEncoder(config=cut3r_config)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.float16
+    spatial_tower.to(device=device, dtype=dtype).eval()
+
+    logger.info(f"[loader] CUT3R loaded on {device}. VRAM={torch.cuda.memory_allocated()/1e9:.2f}GB")
+    return {"model": spatial_tower, "device": device, "dtype": dtype}
 
 
 def unload_cut3r(cut3r_handle: dict | None) -> None:
