@@ -51,7 +51,92 @@
 
 ---
 
-## 2. 프로젝트 구조
+## 2. 실행 방법
+
+### 2.1. 요구사항
+
+| 항목 | stub 모드 (개발/테스트) | 실모델 모드 (운영) |
+|------|------------------------|-------------------|
+| **Python** | 3.13 (현재 검증 기준) | **3.10** (PyTorch 2.1.1 호환) |
+| **CUDA** | 불필요 | **12.1** |
+| **GPU** | 불필요 | NVIDIA, Compute Capability 8.0+ (Ampere 이상) |
+| **PyTorch** | 미사용 | 2.1.1 + cu121 |
+| **컴파일러** | 불필요 | gcc/g++ 11 (CUT3R C++ 확장 빌드) |
+| **OS** | macOS / Linux | Ubuntu 22.04 권장 |
+| **메모리(VRAM)** | 불필요 | 8GB+ (RTX 3060 Ti 기준 동작 확인) |
+
+> **참고**: PyTorch 2.1.1은 Python 3.13용 wheel을 제공하지 않는다. 실모델 통합 시(TODO C 그룹) 별도 가상환경을 Python 3.10 기반으로 새로 만들거나 PyTorch를 3.13 호환 버전(2.5+)으로 갱신해야 한다. 본 레포 표준 환경 셋업 절차는 [setup.md](../setup.md) 참고.
+
+### 2.2. 로컬 개발 (stub 모드)
+
+GPU 없이도 **전체 흐름 시뮬레이션 가능** — `settings.stub_models=True` (기본값).
+
+```bash
+# 1) 가상환경 (Python 3.13)
+python -m venv .venv
+source .venv/bin/activate
+
+# 2) 의존성 설치
+pip install -r requirements.txt
+
+# 3) (선택) RabbitMQ 띄우기
+docker run -d --name rmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+
+# 4) 서버 실행
+uvicorn app.main:app --reload --port 8000
+
+# 5) Swagger UI
+open http://localhost:8000/docs
+```
+
+### 2.3. 통신 테스트 (stub)
+
+```bash
+# 전처리 요청
+curl -X POST http://localhost:8000/api/v1/preprocess \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "test-job-1",
+    "user_id": "u_demo",
+    "video_url": "https://example.com/test.mp4"
+  }'
+
+# 작업 상태
+curl http://localhost:8000/api/v1/jobs/test-job-1
+
+# 채팅 (stub 응답)
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "test-job-1",
+    "user_id": "u_demo",
+    "question": "방의 크기는?"
+  }'
+```
+
+### 2.4. ngrok 외부 노출 (팀원 데모용)
+
+```bash
+python start_ngrok.py
+# → 공개 URL이 출력됨
+```
+
+### 2.5. 실모델 모드 (GPU 필요, 미구현)
+
+모델 통합은 [TODO.md](TODO.md) §C 참고.
+완료 후:
+```bash
+export STUB_MODELS=false
+export MODEL_PATH=/data/vlm-3r-llava-qwen2-lora
+export CUT3R_WEIGHTS=/data/CUT3R/src/cut3r_512_dpt_4_64.pth
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+> **`--workers 1` 필수**: 모델이 GPU에 1번만 로드되어야 함. N개 워커 = VRAM N배.
+
+---
+
+## 3. 프로젝트 구조
 
 ```
 ai_repo/
@@ -94,7 +179,7 @@ ai_repo/
 └── README.md
 ```
 
-### 2.1. 폴더 책임 분리
+### 3.1. 폴더 책임 분리
 
 | 폴더 | 의존 가능 | 의존 금지 | 핵심 |
 |------|-----------|-----------|------|
@@ -112,33 +197,33 @@ BE ↔ AI 통신은 **두 채널**로 나뉜다. 아래 표가 전체 그림이�
 
 | 구분 | 채널 | 방향 | 동기성 | 해당 섹션 |
 |------|------|------|--------|-----------|
-| 전처리 요청 | HTTP `POST /api/v1/preprocess` | BE → AI | 비동기 (202 즉시 반환) | **§3 (HTTP)** |
-| 전처리 완료/실패 통보 | RabbitMQ `analysis.completed` / `analysis.failed` | AI → BE | 비동기 | **§4 (RabbitMQ)** |
-| 질문/응답 | HTTP `POST /api/v1/chat` | BE → AI | 동기 (응답 즉시 반환) | **§3 (HTTP)** |
-| 작업 상태 폴링 | HTTP `GET /api/v1/jobs/{job_id}` | BE → AI | 동기 | **§3 (HTTP)** |
-| 헬스 체크 | HTTP `GET /health` | (외부) → AI | 동기 | **§3 (HTTP)** |
+| 전처리 요청 | HTTP `POST /api/v1/preprocess` | BE → AI | 비동기 (202 즉시 반환) | **§4 (HTTP)** |
+| 전처리 완료/실패 통보 | RabbitMQ `analysis.completed` / `analysis.failed` | AI → BE | 비동기 | **§5 (RabbitMQ)** |
+| 질문/응답 | HTTP `POST /api/v1/chat` | BE → AI | 동기 (응답 즉시 반환) | **§4 (HTTP)** |
+| 작업 상태 폴링 | HTTP `GET /api/v1/jobs/{job_id}` | BE → AI | 동기 | **§4 (HTTP)** |
+| 헬스 체크 | HTTP `GET /health` | (외부) → AI | 동기 | **§4 (HTTP)** |
 
 요약:
-- **§3 = HTTP** — BE가 AI를 호출하는 모든 요청/응답 (요청 방향: BE → AI)
-- **§4 = RabbitMQ** — AI가 전처리 결과를 BE에 되돌려주는 비동기 메시지 (방향: AI → BE)
+- **§4 = HTTP** — BE가 AI를 호출하는 모든 요청/응답 (요청 방향: BE → AI)
+- **§5 = RabbitMQ** — AI가 전처리 결과를 BE에 되돌려주는 비동기 메시지 (방향: AI → BE)
 
 전처리 한 건의 전체 흐름:
 ```
-BE ──HTTP POST /preprocess──▶ AI        (§3)
-BE ◀──── 202 Accepted ────── AI         (§3)
+BE ──HTTP POST /preprocess──▶ AI        (§4)
+BE ◀──── 202 Accepted ────── AI         (§4)
                               AI: 백그라운드 처리
-BE ◀═══ RabbitMQ analysis.completed ═══ AI   (§4)
+BE ◀═══ RabbitMQ analysis.completed ═══ AI   (§5)
 ```
 
 ---
 
-## 3. HTTP API (동기 요청 · BE → AI)
+## 4. HTTP API (동기 요청 · BE → AI)
 
-> 본 절(§3) 전체가 **HTTP** 통신이다. RabbitMQ 메시지 규약은 §4를 참조.
+> 본 절(§4) 전체가 **HTTP** 통신이다. RabbitMQ 메시지 규약은 §5를 참조.
 > 모든 에러 응답은 FastAPI 규약에 따라 최상위 `detail` 키로 래핑된다.
 > (예: `{"detail": { ... }}`)
 
-### 3.1. `POST /api/v1/preprocess` — 영상 전처리
+### 4.1. `POST /api/v1/preprocess` — 영상 전처리
 
 **Request 필드**
 
@@ -195,11 +280,11 @@ BE ◀═══ RabbitMQ analysis.completed ═══ AI   (§4)
 }
 ```
 
-전처리 진행은 `BackgroundTasks`로 수행된다. **여기까지가 HTTP 응답이며, 처리 완료/실패는 HTTP가 아니라 RabbitMQ로 별도 통보된다 → §4 참조.**
+전처리 진행은 `BackgroundTasks`로 수행된다. **여기까지가 HTTP 응답이며, 처리 완료/실패는 HTTP가 아니라 RabbitMQ로 별도 통보된다 → §5 참조.**
 
 > **stub 모드 동작**: 요청·응답(202)·RabbitMQ 발행은 실모드와 동일하게 수행된다. 차이는 CUT3R 추출이 더미 텐서로 대체되고 S3 업로드가 스킵된다는 점뿐이다. 따라서 `analysis.completed` 메시지의 `spatial_features_s3_key`가 가리키는 경로에는 실제 파일이 존재하지 않는다.
 
-### 3.2. `POST /api/v1/chat` — 자연어 질문 응답
+### 4.2. `POST /api/v1/chat` — 자연어 질문 응답
 
 **Request 필드**
 
@@ -281,7 +366,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 { "detail": { "code": "PREPROCESS_NOT_READY", "message": "전처리 미완료 (현재 status=processing)" } }
 ```
 
-### 3.3. `GET /api/v1/jobs/{job_id}` — 작업 상태 조회
+### 4.3. `GET /api/v1/jobs/{job_id}` — 작업 상태 조회
 
 폴링용. RabbitMQ 메시지 누락 시 BE의 복구 경로로 사용한다.
 
@@ -302,7 +387,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 | `data.video_path` | string | 처리 중 이후 | 로컬 다운로드 경로 |
 | `data.spatial_features_s3_key` | string | 완료 시 | 추출 결과 S3 키 |
 | `data.completed_at` | datetime | 완료 시 | 완료 시각 |
-| `data.error_code` | string | 실패 시 | 에러 코드 (§4.3) |
+| `data.error_code` | string | 실패 시 | 에러 코드 (§5.3) |
 | `data.error_message` | string | 실패 시 | 에러 메시지 |
 | `data.failed_at` | datetime | 실패 시 | 실패 시각 |
 
@@ -336,7 +421,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 }
 ```
 
-### 3.4. `GET /health` — 헬스 체크
+### 4.4. `GET /health` — 헬스 체크
 
 **Response — `200 OK`**
 
@@ -370,13 +455,13 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 4. RabbitMQ 메시지 계약 (비동기 통보 · AI → BE)
+## 5. RabbitMQ 메시지 계약 (비동기 통보 · AI → BE)
 
 > 여기서부터는 **HTTP가 아니다.** AI 서버가 전처리 작업을 마친 뒤 BE에게
 > 결과를 알리기 위해 RabbitMQ 메시지 큐로 발행하는 메시지의 규약이다.
-> HTTP 요청/응답 명세는 §3을 참조.
+> HTTP 요청/응답 명세는 §4를 참조.
 
-### 4.1. Exchange / Queue
+### 5.1. Exchange / Queue
 
 | 항목 | 값 |
 |------|-----|
@@ -384,7 +469,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 | Queue | `analysis_results` (durable) |
 | Binding | `analysis.*` |
 
-### 4.2. Routing Key & Payload
+### 5.2. Routing Key & Payload
 
 **`analysis.completed`** (전처리 성공)
 ```json
@@ -413,7 +498,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 **`event_type` 필드**: 향후 `chat_completed` 등으로 확장 가능. BE는 routing key + event_type 조합으로 디스패치.
 
-### 4.3. 에러 코드
+### 5.3. 에러 코드
 
 | code | 의미 |
 |------|------|
@@ -422,77 +507,6 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 | `VIDEO_TOO_LARGE` | 500MB 초과 |
 | `UNSUPPORTED_VIDEO_FORMAT` | mp4/mov/avi 외 |
 | `INTERNAL_SERVER_ERROR` | 알 수 없는 오류 |
-
----
-
-## 5. 실행 방법
-
-### 5.1. 로컬 개발 (stub 모드)
-
-GPU 없이도 **전체 흐름 시뮬레이션 가능** — `settings.stub_models=True` (기본값).
-
-```bash
-# 1) 가상환경
-python3 -m venv venv
-source venv/bin/activate
-
-# 2) 의존성 설치
-pip install -r requirements.txt
-
-# 3) (선택) RabbitMQ 띄우기
-docker run -d --name rmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
-
-# 4) 서버 실행
-uvicorn app.main:app --reload --port 8000
-
-# 5) Swagger UI
-open http://localhost:8000/docs
-```
-
-### 5.2. 통신 테스트 (stub)
-
-```bash
-# 전처리 요청
-curl -X POST http://localhost:8000/api/v1/preprocess \
-  -H "Content-Type: application/json" \
-  -d '{
-    "job_id": "test-job-1",
-    "user_id": "u_demo",
-    "video_url": "https://example.com/test.mp4"
-  }'
-
-# 작업 상태
-curl http://localhost:8000/api/v1/jobs/test-job-1
-
-# 채팅 (stub 응답)
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "job_id": "test-job-1",
-    "user_id": "u_demo",
-    "question": "방의 크기는?"
-  }'
-```
-
-### 5.3. ngrok 외부 노출 (팀원 데모용)
-
-```bash
-python start_ngrok.py
-# → 공개 URL이 출력됨
-```
-
-### 5.4. 실모델 모드 (GPU 필요, 미구현)
-
-모델 통합은 [TODO.md](TODO.md) §C 참고.
-완료 후:
-```bash
-export STUB_MODELS=false
-export MODEL_PATH=/data/vlm-3r-llava-qwen2-lora
-export CUT3R_WEIGHTS=/data/CUT3R/src/cut3r_512_dpt_4_64.pth
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
-```
-
-> **`--workers 1` 필수**: 모델이 GPU에 1번만 로드되어야 함. N개 워커 = VRAM N배.
 
 ---
 
