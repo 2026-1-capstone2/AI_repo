@@ -29,7 +29,11 @@ from app.vlm.llava.model.multimodal_encoder.siglip_encoder import SigLipImagePro
 
 # Add imports for direct spatial tower loading
 from app.vlm.llava.model.multimodal_spatial_encoder.cut3r_spatial_encoder import Cut3rSpatialConfig, Cut3rEncoder
-from src.dust3r.model import ARCroco3DStereo # Import CUT3R model class
+import sys, os as _os
+_CUT3R_SRC = _os.path.join(_os.path.dirname(__file__), '..', 'CUT3R', 'src')
+if _CUT3R_SRC not in sys.path:
+    sys.path.insert(0, _os.path.abspath(_CUT3R_SRC))
+from dust3r.model import ARCroco3DStereo # Import CUT3R model class
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 

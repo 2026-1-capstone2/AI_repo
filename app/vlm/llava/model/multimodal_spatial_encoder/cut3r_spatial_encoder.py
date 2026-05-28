@@ -7,8 +7,10 @@ import os
 from app.vlm.llava.utils import rank0_print
 from einops import rearrange
 import sys
-sys.path.append('CUT3R')
-from src.dust3r.model import ARCroco3DStereo
+_CUT3R_SRC = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'CUT3R', 'src')
+if _CUT3R_SRC not in sys.path:
+    sys.path.insert(0, os.path.abspath(_CUT3R_SRC))
+from dust3r.model import ARCroco3DStereo
 import numpy as np
 
 try:
