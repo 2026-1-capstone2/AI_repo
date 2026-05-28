@@ -1,0 +1,49 @@
+# =================================================================
+# 실모델 (stub_models=False) 통합 시점에 추가 설치하는 의존성
+# =================================================================
+#
+# 사용법 (GPU 서버에서):
+#   pip install -r requirements.txt        # 1) 기본 (FastAPI 등)
+#   pip install -r requirements-ml.txt     # 2) 실모델용 추가
+#
+# 권장 환경 (본 레포 setup.md 와 동일):
+#   - Python 3.10  (PyTorch 2.1.1 wheel 호환)
+#   - CUDA 12.1    (드라이버 13.0 환경에서도 검증됨)
+#   - gcc/g++ 11   (CUT3R curope C++ 확장 빌드)
+#
+# stub 모드(Python 3.13 환경)에서는 이 파일을 설치하지 말 것.
+# torch 2.1.1 wheel 이 3.13 용으로 제공되지 않아 설치 실패한다.
+# =================================================================
+
+# --- PyTorch (cu121) ---
+# 다음 명령으로 별도 설치 권장 (정확한 wheel 인덱스가 필요):
+#   pip install torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cu121
+torch==2.1.1
+torchvision==0.16.1
+
+# --- HuggingFace 생태계 ---
+transformers==4.40.0.dev0
+tokenizers==0.15.2
+accelerate==0.29.1
+peft==0.4.0
+bitsandbytes>=0.41.3
+sentencepiece==0.1.99
+huggingface-hub
+
+# --- 어텐션 가속 ---
+# flash-attn 은 wheel 호환이 까다롭다: cu12 + torch2.1 + cpython 3.10 전용 wheel 필요.
+# 다음 wheel URL 로 직접 설치 권장:
+#   pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.1.post1/flash_attn-2.7.1.post1+cu12torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+flash-attn==2.7.1.post1
+
+# --- 비전·영상 ---
+decord
+einops
+opencv-python-headless
+pillow
+timm
+open-clip-torch
+
+# --- 수치 ---
+numpy==1.26.4
+scipy

@@ -13,25 +13,8 @@ httpx==0.27.0
 # S3 (spatial_features 저장)
 boto3==1.34.0
 
-# ──────────────────────────────────────────────────────────────
-# 아래는 실모델(stub_models=False) 통합 시점에 추가 설치
-# torch==2.1.1
-# torchvision==0.16.1
-# transformers==4.40.0.dev0
-# flash-attn==2.7.1
-# bitsandbytes>=0.41.3
-# accelerate==0.29.1
-# peft==0.4.0
-# tokenizers==0.15.2
-# sentencepiece==0.1.99
-# decord
-# einops
-# opencv-python-headless
-# pillow
-# numpy==1.26.4
-# timm
-# open-clip-torch
-# ──────────────────────────────────────────────────────────────
+# 실모델(stub_models=False) 추가 의존성은 requirements-ml.txt 에 분리되어 있음
+# (Python 3.10 + CUDA 12.1 환경에서만 설치 가능. stub 모드에서는 미설치 권장)
 
 # ngrok (개발용 터널)
 pyngrok==7.0.0

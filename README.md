@@ -184,15 +184,30 @@ ls -lh /data/vlm-3r-llava-qwen2-lora/non_lora_trainables.bin # 51MB
 
 세 파일 크기가 위와 같으면 정상. 자세한 트러블슈팅은 [setup.md](../setup.md) §A.6 ~ §A.7 참조.
 
-### 2.6. 실모델 모드 실행 (GPU 필요, 미구현)
+### 2.6. 실모델 모드 실행 (GPU 필요)
 
-모델 통합 작업은 [TODO.md](TODO.md) §C 참고. 통합 완료 후:
+모델 통합 작업은 [TODO.md](TODO.md) §C 참고. GPU 서버(Python 3.10 + CUDA 12.1)에서:
 
 ```bash
+# 1) 가상환경 (Python 3.10)
+python3.10 -m venv .venv
+source .venv/bin/activate
+
+# 2) 기본 + 실모델 의존성 설치
+pip install -r requirements.txt
+pip install -r requirements-ml.txt
+# PyTorch는 cu121 인덱스로 직접 설치 권장:
+pip install torch==2.1.1 torchvision==0.16.1 \
+  --index-url https://download.pytorch.org/whl/cu121
+# flash-attn 은 wheel URL 직접 설치 권장 (자세한 셋업은 ../setup.md 참고)
+
+# 3) 환경변수 (모델 경로·캐시·stub 해제)
 export STUB_MODELS=false
 export MODEL_PATH=/data/vlm-3r-llava-qwen2-lora
 export CUT3R_WEIGHTS=/data/CUT3R/src/cut3r_512_dpt_4_64.pth
 export HF_HOME=/data/huggingface_cache
+
+# 4) 서버 기동
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
