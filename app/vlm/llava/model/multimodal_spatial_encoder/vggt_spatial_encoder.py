@@ -4,7 +4,7 @@ from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPooling, BaseModelOutput
 from typing import Union, Optional, Tuple
 import os
-from llava.utils import rank0_print
+from app.vlm.llava.utils import rank0_print
 from einops import rearrange
 import sys
 # TODO: Verify this relative path is correct for the project structure

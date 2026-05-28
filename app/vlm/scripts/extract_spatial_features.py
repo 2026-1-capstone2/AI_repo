@@ -21,14 +21,14 @@ import h5py # Added for potential HDF5 saving (though not used currently for poi
 
 # Assume necessary imports from llava are available in the PYTHONPATH
 # You might need to adjust imports based on your project structure
-from llava.utils import process_video_with_decord # Or other video processing functions used
-from llava.utils import rank0_print # Use rank0_print for controlled output
-from llava.train.train import DataArguments # Re-use DataArguments for consistency
-from llava.constants import DEFAULT_IMAGE_TOKEN
-from llava.model.multimodal_encoder.siglip_encoder import SigLipImageProcessor # Added direct import
+from app.vlm.llava.utils import process_video_with_decord # Or other video processing functions used
+from app.vlm.llava.utils import rank0_print # Use rank0_print for controlled output
+from app.vlm.llava.train.train import DataArguments # Re-use DataArguments for consistency
+from app.vlm.llava.constants import DEFAULT_IMAGE_TOKEN
+from app.vlm.llava.model.multimodal_encoder.siglip_encoder import SigLipImageProcessor # Added direct import
 
 # Add imports for direct spatial tower loading
-from llava.model.multimodal_spatial_encoder.cut3r_spatial_encoder import Cut3rSpatialConfig, Cut3rEncoder
+from app.vlm.llava.model.multimodal_spatial_encoder.cut3r_spatial_encoder import Cut3rSpatialConfig, Cut3rEncoder
 from src.dust3r.model import ARCroco3DStereo # Import CUT3R model class
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
