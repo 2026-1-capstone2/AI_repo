@@ -121,14 +121,78 @@ python start_ngrok.py
 # → 공개 URL이 출력됨
 ```
 
-### 2.5. 실모델 모드 (GPU 필요, 미구현)
+### 2.5. 모델 가중치 다운로드
 
-모델 통합은 [TODO.md](TODO.md) §C 참고.
-완료 후:
+실모델 모드 실행 전 다음 세 가지 가중치가 필요하다.
+
+| 가중치 | 출처 | 크기 | 저장 경로 (기본값) |
+|--------|------|------|-------------------|
+| **CUT3R** | Google Drive | ~600 MB | `/data/CUT3R/src/cut3r_512_dpt_4_64.pth` |
+| **VLM-3R LoRA** | HuggingFace `Journey9ni/vlm-3r-llava-qwen2-lora` | ~700 MB | `/data/vlm-3r-llava-qwen2-lora/` |
+| **베이스 모델** (LLaVA-NeXT-Video-7B-Qwen2) | HuggingFace `lmms-lab/LLaVA-NeXT-Video-7B-Qwen2` | ~14 GB | HuggingFace 캐시 (자동) |
+
+총 약 15~16 GB. 저장 경로는 `settings.cut3r_weights`, `settings.model_path` 와 일치시키거나 환경변수로 재정의한다.
+
+#### 사전 설치
+
+```bash
+sudo apt install git-lfs -y    # LoRA의 LFS 파일 다운로드용
+pip install gdown               # CUT3R의 Google Drive 다운로드용
+```
+
+#### 1) CUT3R 가중치
+
+```bash
+sudo mkdir -p /data/CUT3R/src && sudo chown $USER /data/CUT3R/src
+cd /data/CUT3R/src
+gdown 1Asz-ZB3FfpzZYwunhQvNPZEUA8XUNAYD       # cut3r_512_dpt_4_64.pth (~600MB)
+```
+
+> gdown 6.x 부터 `--fuzzy` 옵션이 제거되었으므로 파일 ID 만 직접 전달해야 한다.
+
+#### 2) VLM-3R LoRA 가중치
+
+```bash
+git lfs install                # 1회만, 미설치 시 134바이트 LFS 포인터만 받음
+cd /data
+git clone https://huggingface.co/Journey9ni/vlm-3r-llava-qwen2-lora
+cd vlm-3r-llava-qwen2-lora
+git lfs pull                   # adapter_model.bin (617MB), non_lora_trainables.bin (51MB)
+```
+
+#### 3) 베이스 모델 (자동 다운로드)
+
+서버 첫 기동 시 `from_pretrained()` 호출로 HuggingFace에서 자동 다운로드된다(~14GB). 캐시 위치 지정 권장:
+
+```bash
+export HF_HOME=/data/huggingface_cache
+```
+
+미리 받아두려면:
+```bash
+huggingface-cli download lmms-lab/LLaVA-NeXT-Video-7B-Qwen2 \
+  --local-dir /data/huggingface_cache/llava-next-video-7b-qwen2
+```
+
+#### 검증
+
+```bash
+ls -lh /data/CUT3R/src/cut3r_512_dpt_4_64.pth                # 약 600MB
+ls -lh /data/vlm-3r-llava-qwen2-lora/adapter_model.bin       # 617MB
+ls -lh /data/vlm-3r-llava-qwen2-lora/non_lora_trainables.bin # 51MB
+```
+
+세 파일 크기가 위와 같으면 정상. 자세한 트러블슈팅은 [setup.md](../setup.md) §A.6 ~ §A.7 참조.
+
+### 2.6. 실모델 모드 실행 (GPU 필요, 미구현)
+
+모델 통합 작업은 [TODO.md](TODO.md) §C 참고. 통합 완료 후:
+
 ```bash
 export STUB_MODELS=false
 export MODEL_PATH=/data/vlm-3r-llava-qwen2-lora
 export CUT3R_WEIGHTS=/data/CUT3R/src/cut3r_512_dpt_4_64.pth
+export HF_HOME=/data/huggingface_cache
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
