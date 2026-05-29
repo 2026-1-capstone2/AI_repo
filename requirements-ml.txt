@@ -2,9 +2,12 @@
 # 실모델 (stub_models=False) 통합 시점에 추가 설치하는 의존성
 # =================================================================
 #
-# 사용법 (GPU 서버에서):
-#   pip install -r requirements.txt        # 1) 기본 (FastAPI 등)
-#   pip install -r requirements-ml.txt     # 2) 실모델용 추가
+# ⚠️  설치 순서를 반드시 지킬 것 — README §2.3 참조.
+#    PyTorch (cu121) 를 먼저 깐 뒤 이 파일을 설치해야 한다.
+#    open-clip-torch 등이 무핀 상태에서 torch 최신/cu13 wheel 을 silent
+#    로 끌어와 sub-installation 자체를 깨뜨리는 사고가 있었다 (V1 검증
+#    중 발견. docs/install-issues.md §A3 참조).
+#    본 파일의 핀들은 그 사고 이후 모두 torch 2.1.1+cu121 호환으로 고정된 값.
 #
 # 권장 환경 (본 레포 setup.md 와 동일):
 #   - Python 3.10  (PyTorch 2.1.1 wheel 호환)
@@ -16,23 +19,24 @@
 # =================================================================
 
 # --- PyTorch (cu121) ---
-# 다음 명령으로 별도 설치 권장 (정확한 wheel 인덱스가 필요):
+# 본 파일 설치 전에 cu121 wheel 로 별도 설치 필수 (--index-url 필요):
 #   pip install torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cu121
+# 본 파일에는 호환 핀만 명시한다.
 torch==2.1.1
 torchvision==0.16.1
 
 # --- HuggingFace 생태계 ---
-transformers==4.40.0.dev0
-tokenizers==0.15.2
+transformers==4.40.0           # dev0 은 PyPI 영구 호스팅 안 됨 → 정식 4.40.0 사용
+tokenizers>=0.19,<0.20         # transformers 4.40.0 가 ≥0.19 요구
 accelerate==0.29.1
 peft==0.4.0
-bitsandbytes>=0.41.3
+bitsandbytes>=0.41.3,<0.44    # 0.44+ 는 torch 2.3+ 요구
 sentencepiece==0.1.99
 huggingface-hub
 
 # --- 어텐션 가속 ---
 # flash-attn 은 wheel 호환이 까다롭다: cu12 + torch2.1 + cpython 3.10 전용 wheel 필요.
-# 다음 wheel URL 로 직접 설치 권장:
+# 다음 wheel URL 로 직접 설치 권장 (README §2.3 의 별도 명령 참조):
 #   pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.1.post1/flash_attn-2.7.1.post1+cu12torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 flash-attn==2.7.1.post1
 
@@ -41,8 +45,14 @@ decord
 einops
 opencv-python-headless
 pillow
-timm
-open-clip-torch
+timm==0.9.16                   # 0.9.17+ 가 torch 최신 wheel 끌어옴
+open-clip-torch==2.24.0       # 무핀이면 torch silent overwrite 사고 발생 (A3)
+
+# --- 런타임에 필요한 부속 패키지 ---
+# LLaVA / CUT3R 가 import 경로에서 참조하지만 본 레포 requirements 에서 누락된 것들
+matplotlib                     # LLaVA 언어 모델 임포트 경로
+av                             # LLaVA 비디오 처리 (pyav)
+omegaconf                      # CUT3R 가중치 torch.load 시 (DictConfig pickled)
 
 # --- 수치 ---
 numpy==1.26.4

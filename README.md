@@ -64,10 +64,10 @@ GPU 서버에서 실모델 모드로 동작시키는 표준 절차. 개발 환�
 | **GPU** | NVIDIA, Compute Capability 8.0+ (Ampere 이상), VRAM 8 GB+ |
 | **PyTorch** | 2.1.1 + cu121 |
 | **컴파일러** | gcc/g++ 11 (CUT3R curope C++ 확장 빌드용) |
-| **OS** | Ubuntu 22.04 권장 |
-| **기타** | git-lfs (LoRA 가중치 LFS), gdown (Google Drive 가중치) |
+| **OS** | Ubuntu 22.04 권장. 24.04 사용 시 §2.3.1 (CUDA 12.1 toolkit 부분 설치 + gcc-11) 단계 추가 필요 |
+| **기타** | git-lfs (LoRA 가중치 LFS), gdown (Google Drive 가중치), ninja (CUT3R 빌드용) |
 
-자세한 환경 셋업 트러블슈팅은 [setup.md](../setup.md) 참고.
+자세한 환경별 셋업 트러블슈팅은 [docs/install-issues.md](docs/install-issues.md), [setup.md](../setup.md) 참고.
 
 ### 2.2. 클론
 
@@ -78,29 +78,80 @@ cd AI_repo
 
 ### 2.3. 가상환경 + 의존성 설치
 
+> ⚠️  **설치 순서를 반드시 지킬 것.** PyTorch (cu121) 를 먼저 설치한 뒤
+> `requirements-ml.txt` 를 깔아야 한다. 순서를 바꾸면 `open-clip-torch`
+> 가 무핀 의존성을 끌어와 사전 설치한 torch 2.1.1+cu121 을 silent 로
+> 최신/cu13 wheel 로 덮어쓰며, 그 시점 이후 flash-attn 과 VLM-3R 코드
+> 가정이 모두 깨진다. (사고 사례: [docs/install-issues.md §A3](docs/install-issues.md))
+
 ```bash
 # 1) Python 3.10 가상환경
 python3.10 -m venv .venv
 source .venv/bin/activate
-
-# 2) 기본 의존성
 pip install --upgrade pip
+
+# 2) 기본 의존성 (FastAPI / RabbitMQ / httpx / boto3 등)
 pip install -r requirements.txt
 
-# 3) PyTorch (cu121 wheel — 별도 인덱스 필요)
+# 3) PyTorch (cu121 wheel — 별도 인덱스 필수)
 pip install torch==2.1.1 torchvision==0.16.1 \
   --index-url https://download.pytorch.org/whl/cu121
 
-# 4) 실모델 의존성
-pip install -r requirements-ml.txt
-
-# 5) flash-attn (cu12 + torch2.1 + cpython 3.10 전용 wheel)
+# 4) flash-attn (cu12 + torch2.1 + cpython 3.10 전용 wheel)
+#    requirements-ml.txt 전에 깔아야 한다. (open-clip-torch 가 끌어올 가능성 차단)
 pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.1.post1/flash_attn-2.7.1.post1+cu12torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
+# 5) 실모델 의존성 (transformers / open-clip-torch / matplotlib / av / omegaconf 등)
+pip install -r requirements-ml.txt
+
 # 6) 모델 가중치 다운로드용 도구
-sudo apt install git-lfs -y
+sudo apt install git-lfs ninja-build -y      # ninja 는 CUT3R curope C++ 확장 빌드용
 pip install gdown
 ```
+
+설치 검증:
+```bash
+python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+# → torch 2.1.1+cu121 cuda True
+python -c "import flash_attn, transformers, open_clip; print('flash-attn', flash_attn.__version__, '/ transformers', transformers.__version__)"
+# → flash-attn 2.7.1.post1 / transformers 4.40.0
+```
+
+이 시점에 torch 가 `2.1.1+cu121` 가 아니라면 4)~5) 순서가 깨졌거나, `requirements-ml.txt` 의 무핀 패키지가 다시 도입된 것이다. 핀 변경을 의심하고 [docs/install-issues.md §A3](docs/install-issues.md) 절차로 복구한다.
+
+### 2.3.1. 환경별 추가 셋업 (권장 환경이 아닌 경우)
+
+권장 환경(Ubuntu 22.04 + CUDA 12.1 + gcc 11)에서는 본 절을 건너뛴다. **Ubuntu 24.04** 또는 **시스템 기본 CUDA toolkit 이 12.1 이 아닌 경우** 다음 추가 단계가 필요하다 ([docs/install-issues.md §B](docs/install-issues.md) 참조).
+
+#### CUDA 12.1 toolkit 부분 설치
+
+`/usr/local/cuda` 가 12.1 이 아니면 PyTorch 2.1.1 cu121 wheel 과 nvcc 가 major mismatch 로 CUT3R 빌드 시 거부된다 (`The detected CUDA version (X) mismatches the version that was used to compile PyTorch (12.1)`). NVIDIA apt repo 추가 후 12.1 toolkit 만 별도 설치:
+
+```bash
+cd /tmp
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install -y cuda-nvcc-12-1 cuda-cudart-dev-12-1 cuda-libraries-dev-12-1
+```
+
+#### gcc 11 설치
+
+CUDA 12.1 nvcc 는 gcc ≤12 만 공식 지원하며, gcc 12 는 PyTorch 2.1.1 동봉 pybind11 헤더와 C++ 템플릿 파싱 충돌이 있다 → **gcc 11 이 유일한 검증 조합**.
+
+```bash
+sudo apt-get install -y gcc-11 g++-11
+```
+
+이 두 단계가 끝나면 CUT3R curope 빌드 시 다음과 같이 환경변수를 명시:
+```bash
+cd app/vlm/CUT3R/src/croco/models/curope
+rm -rf build curope*.so
+CUDA_HOME=/usr/local/cuda-12.1 PATH=/usr/local/cuda-12.1/bin:$PATH \
+CC=gcc-11 CXX=g++-11 python setup.py build_ext --inplace
+```
+
+결과: `curope.cpython-310-x86_64-linux-gnu.so` 생성 (deprecation 경고는 무해).
 
 ### 2.4. 모델 가중치 다운로드
 
@@ -710,4 +761,6 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ## 9. 관련 문서
 
-- [TODO.md](TODO.md) — 우선순위별 작업 리스트
+- [TODO.md](TODO.md) — 우선순위별 작업 리스트 (C-VERIFY: GPU 서버 검증 체크리스트 포함)
+- [docs/install-issues.md](docs/install-issues.md) — 셋업 중 마주친 이슈 및 환경별 추가 단계 (A: 프로젝트 / B: 환경)
+- [../setup.md](../setup.md) — 본 레포(VLM-3Rdemo) 표준 환경 셋업 트러블슈팅
