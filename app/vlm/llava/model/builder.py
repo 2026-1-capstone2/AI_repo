@@ -32,7 +32,19 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
     elif load_4bit:
         # llm_int8_enable_fp32_cpu_offload=True: VRAM 부족 시 일부 레이어를 CPU(시스템 RAM)에 배치 허용
         # 4GB VRAM 같은 저용량 환경 대응. 추론 속도는 PCIe 대역폭에 묶여 크게 느려짐.
-        kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True, bnb_4bit_quant_type="nf4", llm_int8_enable_fp32_cpu_offload=True)
+        # llm_int8_skip_modules: 학습된 멀티모달 어댑터(fusion_block, mm_projector)와 비전/공간
+        # 인코더는 4bit 양자화에서 제외하고 fp16으로 유지한다. 이들은 non_lora_trainables.bin 에서
+        # fp16 Parameter로 직접 덮어써지는데(아래 L140~ 참고), 해당 Linear가 Linear4bit 로 생성돼
+        # 있으면 forward 시 quant_state 가 없어 bnb.matmul_4bit 가 실패한다
+        # ('Parameter' object has no attribute 'quant_state'). 양자화 대상은 LLM(Qwen2) 본체뿐.
+        kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            llm_int8_enable_fp32_cpu_offload=True,
+            llm_int8_skip_modules=["mm_projector", "vision_tower", "vision_resampler", "fusion_block", "spatial_tower"],
+        )
         # device_map="auto"가 저VRAM 환경에서 모델 전체를 CPU로 보내 PEFT dispatch가 깨지는 현상 방지.
         # GPU에 LLM weights 일부를 강제 배치 (PEFT가 main_device를 찾을 수 있도록).
         # VRAM이 충분한 환경(24GB+)에서는 거의 모델 전체를 의미해 결과적으로 device_map="auto"와 동일.
@@ -117,10 +129,17 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
                 tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
                 model = LlavaLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, attn_implementation=attn_implementation, **kwargs)
 
-            token_num, tokem_dim = model.lm_head.out_features, model.lm_head.in_features
-            if model.lm_head.weight.shape[0] != token_num:
-                model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
-                model.model.embed_tokens.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
+            # vocab 확장용 placeholder 재할당은 "비양자화" 모델에서만 수행한다.
+            # 양자화(4bit/8bit) 모델은 lm_head 가 Linear4bit/Int8 로, weight 가 패킹된 1D 텐서라
+            # weight.shape[0](패킹 크기, 예: 272M) != out_features(예: 152064) 가 항상 참이 된다.
+            # 그 결과 이 블록이 base 에서 정상 로드된 lm_head/embed_tokens 를 빈(torch.empty) 텐서로
+            # 덮어써, 토큰 임베딩이 0 → 모든 출력이 token 0('!')으로 깨졌다(원인 추적 완료).
+            # non_lora_trainables.bin 에도 lm_head/embed_tokens 는 없으므로 복구되지 않는다.
+            if not (load_4bit or load_8bit):
+                token_num, tokem_dim = model.lm_head.out_features, model.lm_head.in_features
+                if model.lm_head.weight.shape[0] != token_num:
+                    model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
+                    model.model.embed_tokens.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
 
             rank0_print("Loading additional LLaVA weights...")
             if os.path.exists(os.path.join(model_path, "non_lora_trainables.bin")):
@@ -364,7 +383,13 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             tokenizer.add_tokens([DEFAULT_IMAGE_PATCH_TOKEN], special_tokens=True)
         if mm_use_im_start_end:
             tokenizer.add_tokens([DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN], special_tokens=True)
-        model.resize_token_embeddings(len(tokenizer))
+        # 양자화(4bit/8bit) 모델에서는 resize_token_embeddings 를 호출하지 않는다.
+        # lm_head/embed_tokens 가 Linear4bit(정수 패킹 weight)이라 transformers 의 resize 가
+        # 새 nn.Linear 를 만들며 정수 텐서에 requires_grad 를 설정하려다 RuntimeError 가 난다.
+        # config 의 vocab_size(152064)가 토크나이저 길이보다 크게 잡혀 있어 추가 special token 도
+        # 기존 임베딩 범위 안에 들어오므로 resize 없이 안전하다.
+        if not (load_4bit or load_8bit):
+            model.resize_token_embeddings(len(tokenizer))
 
         vision_tower = model.get_vision_tower()
         if not vision_tower.is_loaded:

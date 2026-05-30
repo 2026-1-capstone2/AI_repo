@@ -34,7 +34,12 @@ def load_vlm() -> dict | None:
         "fusion_block": "cross_attention",
     }
     if settings.disable_spatial_tower_in_vlm:
-        overwrite_config["spatial_tower"] = None
+        # CUT3R는 load_cut3r()로 별도 적재하고, 추론 시 precompute된 spatial_features를
+        # 주입한다. 따라서 VLM 안에 CUT3R(spatial_tower) 가중치를 중복 적재할 필요가 없다.
+        # 단, spatial_tower 설정 자체("cut3r")는 그대로 둬야 추론 분기(encode_images)가
+        # precomputed features 경로를 탄다 (spatial_tower=None 으로 끄면 그 경로가 막힌다).
+        # 아래 플래그를 보고 llava_qwen.from_pretrained 가 "무거운 가중치 로드만" 건너뛴다.
+        overwrite_config["disable_spatial_tower_weights"] = True
 
     tokenizer, model, image_processor, _ = load_pretrained_model(
         model_path=settings.model_path,
