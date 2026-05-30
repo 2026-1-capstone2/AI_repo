@@ -33,7 +33,11 @@ def run_inference(model, tokenizer, req) -> dict:
     with torch.inference_mode():
         output_ids = model.generate(
             inputs=input_ids,
-            images=video_tensor,
+            # video modality는 images를 "리스트"로 전달해야 prepare_inputs_labels_for_multimodal
+            # 의 list/5D 분기를 타고 spatial_features가 encode_images까지 전달된다.
+            # 바로 4D 텐서를 넘기면 else 분기(encode_images(images))로 빠져 spatial_features가
+            # 무시되고 spatial_tower forward를 시도하다 실패한다.
+            images=[video_tensor],
             attention_mask=attention_mask,
             spatial_features=spatial_features,
             modalities="video",

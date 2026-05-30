@@ -62,7 +62,11 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
         # 创建模型实例
         model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         # 加载自定义权重
-        if model.get_spatial_tower() is not None:
+        # 분리 추론(serving) 모드에서는 CUT3R 가중치를 VLM에 적재하지 않는다.
+        # spatial_features를 외부(load_cut3r → extract_spatial_features)에서 precompute해
+        # 주입하므로 spatial_tower 래퍼만 있으면 충분하고, 무거운 CUT3R 가중치는 불필요하다
+        # (VRAM 중복 적재 방지). disable_spatial_tower_weights=True 면 가중치 로드를 건너뛴다.
+        if model.get_spatial_tower() is not None and not getattr(model.config, "disable_spatial_tower_weights", False):
             model.get_spatial_tower().is_loaded = False
             model.get_spatial_tower().load_model()
             model.get_spatial_tower().is_loaded = True

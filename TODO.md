@@ -39,9 +39,31 @@
 | D1 docker-compose | 도커 트랙 분리 |
 | E1~E4 배포 (GPU 인스턴스·IAM·도메인·k8s) | 인프라 트랙 |
 
-### 다음 단계 — C-VERIFY (GPU 서버 검증)
+### 다음 단계 — C-VERIFY (GPU 서버 검증) ✅ 완료 (2026-05-30, A100 80GB)
 
 코드 측 작업은 macOS 환경에서 검증 불가 (torch CUDA wheel 부재). GPU 서버에서 `git pull` 후 아래 체크리스트로 확인하고, 깨지는 항목이 있으면 그 정보로 코드 보완을 진행한다. 자세한 내용은 §C-VERIFY 참조.
+
+**검증 결과 — V1~V5 전부 PASS** (검증 도구: `scripts/verify_models.py`, S3/RabbitMQ 없이 모델 경로만 직접 호출):
+
+```
+V1: PASS — Cut3rEncoder cuda fp16, VRAM +1.62GB
+V2: PASS — 32 frames, _VideoArgs 호환
+V3: PASS — camera(32,1,768) patch(32,729,768) fp16
+V4: PASS — 실영상 추출 ~1.7s, .pt 35MB 저장/재로드
+V5: PASS — 실모델 자연어 응답 ("The room contains a bed, a nightstand...")
+```
+
+**검증 중 발견·수정한 버그 (실모델 추론을 끝까지 통과시키며 식별)**:
+
+| # | 증상 | 원인 | 수정 파일 |
+|---|------|------|-----------|
+| 1 | `OSError` CUT3R 경로 / VLM이 CUT3R 중복 적재 | `llava_qwen.from_pretrained` 가 `delay_load` 무시하고 spatial_tower `load_model()` 무조건 호출 (게다가 경로 하드코딩) | `loader.py`, `llava_qwen.py` (`disable_spatial_tower_weights` 플래그 신설) |
+| 2 | `spatial_features` 무시 → spatial_tower forward 시도 실패 | video를 4D 텐서로 전달해 `prepare_inputs_labels_for_multimodal` 의 list/5D 분기를 못 탐 | `inference.py` (`images=[video_tensor]` 리스트 래핑) |
+| 3 | `'Parameter' object has no attribute 'quant_state'` | fusion_block/mm_projector(학습 어댑터)가 4bit 양자화됨 → fp16 weight 덮어쓰며 quant_state 소실 | `builder.py` (`llm_int8_skip_modules` 추가) |
+| 4 | 출력이 전부 `!!!!` (lm_head/embed_tokens=0) | 양자화 시 lm_head가 Linear4bit(패킹 1D)라 vocab placeholder 재할당 조건이 항상 참 → 정상 embed/lm_head를 빈 텐서로 덮어씀 | `builder.py` (양자화 모델에서 재할당 스킵) |
+| 5 | `RuntimeError: Only ... floating point ... require gradients` | `resize_token_embeddings` 가 Linear4bit(정수 패킹)에서 실패 | `builder.py` (양자화 시 resize 스킵, vocab_size 152064로 헤드룸 충분) |
+
+> 위 버그는 모두 `STUB_MODELS=false` 실모델 경로에서만 발현 (stub/CI에서는 미발현). 4bit 양자화 + LoRA(unmerged) 조합 특유의 이슈. 재검증: `python -m scripts.verify_models` (실모델 모드).
 
 ---
 
