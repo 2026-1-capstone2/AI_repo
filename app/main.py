@@ -2,11 +2,18 @@
 공간 분석 AI 챗봇 서비스 - AI 서버
 FastAPI 기반 백엔드 메인 진입점
 """
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.lifespan import lifespan
 from app.routers import chat, health, jobs, preprocess
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(
     title="Spatial Analysis AI Server",
