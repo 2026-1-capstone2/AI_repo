@@ -38,17 +38,13 @@ class RabbitMQPublisher:
             self.connection = pika.BlockingConnection(parameters)
             self.channel = self.connection.channel()
 
+            # Exchange 는 BE 가 소유 (direct, durable). publisher 는 존재만 확인.
+            # passive=True: 이미 있으면 확인만, 없으면 예외 — declare 안 함.
             self.channel.exchange_declare(
                 exchange=settings.rabbitmq_exchange,
-                exchange_type="topic",
-                durable=True,
+                passive=True,
             )
-            self.channel.queue_declare(queue=settings.rabbitmq_queue, durable=True)
-            self.channel.queue_bind(
-                exchange=settings.rabbitmq_exchange,
-                queue=settings.rabbitmq_queue,
-                routing_key="analysis.*",
-            )
+            # Queue/Bind 는 컨슈머(BE) 책임이라 여기서 건드리지 않는다.
 
             logger.info("RabbitMQ 연결 성공")
             return True
