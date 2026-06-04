@@ -13,7 +13,15 @@ from app.routers import chat, health, jobs, preprocess
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
 )
+# 라이브러리 DEBUG 노이즈 억제 — 우리 app.* 로그만 잘 보이도록
+for _noisy in (
+    "httpx", "httpcore",
+    "botocore", "boto3", "s3transfer", "urllib3",
+    "pika",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 app = FastAPI(
     title="Spatial Analysis AI Server",
