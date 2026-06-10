@@ -308,6 +308,25 @@ class LlavaMetaForCausalLM(ABC):
     #     return image_features
 
     def encode_images(self, images, spatial_features=None, point_maps=None):
+        # ── 진단 로그 (VLM_DEBUG=1 일 때만) ──────────────────────────────
+        # 시각/공간/카메라/텍스트 4-modality 중 어느 게 silent 하게 떨어지는지
+        # 한 줄로 확인하기 위한 훅. 자세한 사용법은 README §8 Debug 참고.
+        import os as _os
+        if _os.environ.get("VLM_DEBUG"):
+            _st = self.get_model().get_spatial_tower()
+            _fb = self.get_model().get_fusion_block()
+            _cfg = self.get_model().config
+            print(
+                f"[VLM_DEBUG encode_images] "
+                f"spatial_tower={type(_st).__name__ if _st is not None else None} "
+                f"fusion_block={type(_fb).__name__ if _fb is not None else None} "
+                f"spatial_features={'YES(' + str(len(spatial_features)) + ')' if spatial_features else 'NO'} "
+                f"spatial_encoder_type={getattr(_cfg, 'spatial_tower', None)} "
+                f"fusion_type={getattr(_cfg, 'fusion_block', None)} "
+                f"select_feature={getattr(self.config, 'spatial_tower_select_feature', None)}",
+                flush=True,
+            )
+        # ──────────────────────────────────────────────────────────────
         # vision features
         image_features = self.get_model().get_vision_tower()(images)
         # fuse with spatial features

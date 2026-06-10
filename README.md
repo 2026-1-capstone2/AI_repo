@@ -734,9 +734,86 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 8. 작업 상태
+## 8. Debug — 4-modality 흐름 진단 (VLM_DEBUG)
 
-### 8.1. 완료
+VLM-3R 추론에는 4종 입력이 LLM 으로 들어가야 한다:
+
+| 종류 | 출처 | 변수 |
+|------|------|------|
+| ① 텍스트 | 질문 + history → Qwen2 tokenizer | `input_ids` |
+| ② 시각 | 영상 프레임 → SigLip vision_tower | `image_features` |
+| ③ 카메라 | CUT3R `camera_tokens` (F,1,768) | `spatial_features[0]["camera_tokens"]` |
+| ④ 공간 | CUT3R `patch_tokens` (F,729,768) | `spatial_features[0]["patch_tokens"]` |
+
+③④ 는 `encode_images()` 안에서 `fusion_block(cross_attention)` 으로 ② 와 융합된 뒤
+`mm_projector` 를 거쳐 ① 의 `IMAGE_TOKEN_INDEX` 위치에 주입된다.
+
+### 8.1. 흔한 silent 실패 3가지
+
+| 함정 | 증상 | 원인 |
+|------|------|------|
+| `spatial_tower` 가 `None` | 환각, 3D 질문에 일반론 | `disable_spatial_tower_in_vlm` 잘못 적용 / 설정에서 spatial_tower 가 빈 값 |
+| `fusion_block` 가중치 누락 | 답변이 무관한 방향, 반복 | builder.py 의 non-LoRA 가중치 로드 실패 → 랜덤 가중치 |
+| `spatial_features` kwarg drop | CUT3R 결과 무시 | `model.generate` → `encode_images` 체인 중간에서 kwarg 가 silent 하게 제거 |
+
+### 8.2. 진단 로그 켜기
+
+[app/vlm/llava/model/llava_arch.py](app/vlm/llava/model/llava_arch.py) `encode_images()` 에 한 줄 진단 훅이 들어 있다.
+환경변수로 활성화:
+
+```bash
+VLM_DEBUG=1 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+`/chat` 요청을 한 번 보내면 매 forward 마다 한 줄씩 출력:
+
+```
+[VLM_DEBUG encode_images] spatial_tower=Cut3rEncoder fusion_block=CrossAttention \
+spatial_features=YES(1) spatial_encoder_type=cut3r fusion_type=cross_attention \
+select_feature=all
+```
+
+### 8.3. 기대값과 어긋남 해석
+
+| 필드 | 정상 | 어긋남 → 원인 |
+|------|------|----------------|
+| `spatial_tower` | `Cut3rEncoder` (또는 유사 클래스) | `None` → 함정 #1 |
+| `fusion_block` | `CrossAttentionBlock` 등 | `None` → 융합 자체 비활성 |
+| `spatial_features` | `YES(1)` | `NO` → 함정 #3 (kwarg drop) |
+| `spatial_encoder_type` | `cut3r` | 빈 값/다른 값 → fusion 분기 못 탐 |
+| `fusion_type` | `cross_attention` | 다른 값 → 다른 분기, 코드 점검 필요 |
+| `select_feature` | `all` | `patch_tokens` 만이면 카메라 정보 미사용 |
+
+### 8.4. fusion_block 가중치 로드 확인
+
+부팅 로그에서 다음 중 하나가 보여야 정상:
+
+```bash
+grep -iE "non.lora|fusion_block|Incompatible" <서버 로그>
+```
+
+기대 패턴:
+- `Loaded non-LoRA trainables` — LoRA 어댑터 + 추가 가중치 동시 로드
+- `Loaded fusion block weights from ...` — fusion_block 별도 로드
+- 또는 builder.py 의 `setattr-loop` 통과 메시지
+
+전부 없으면 fusion_block 이 랜덤 초기화 상태로 추론 중일 가능성 → 환각의 직접 원인이 된다.
+
+### 8.5. 4-bit 양자화 영향 확인
+
+`LOAD_4BIT=true` 디폴트는 8GB VRAM 환경 대응용이다. 16GB 이상 GPU 라면 `.env` 에서:
+
+```env
+LOAD_4BIT=false
+```
+
+로 끄고 fp16 로 띄우면 품질 손실이 즉시 줄어든다 (필요 VRAM ~14GB).
+
+---
+
+## 9. 작업 상태
+
+### 9.1. 완료
 - [x] FastAPI 골격 + 라우터 분리 (`/preprocess`, `/chat`, `/jobs`, `/health`)
 - [x] Pydantic schemas (preprocess, chat, MQ payload)
 - [x] RabbitMQ publisher (lazy connect, `analysis.*` routing)
@@ -747,7 +824,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 - [x] stub 모드 (GPU·실모델 없이 전 흐름 시뮬레이션 가능)
 - [x] FastAPI lifespan (모델 로드/해제)
 
-### 8.2. 다음 작업
+### 9.2. 다음 작업
 
 [TODO.md](TODO.md) 에서 우선순위별로 관리:
 
@@ -759,7 +836,7 @@ stub 모드 (`STUB_MODELS=true`, 현재 기본값):
 
 ---
 
-## 9. 관련 문서
+## 10. 관련 문서
 
 - [TODO.md](TODO.md) — 우선순위별 작업 리스트 (C-VERIFY: GPU 서버 검증 체크리스트 포함)
 - [docs/install-issues.md](docs/install-issues.md) — 셋업 중 마주친 이슈 및 환경별 추가 단계 (A: 프로젝트 / B: 환경)
